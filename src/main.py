@@ -1,8 +1,9 @@
 import json
+import uuid
+from pathlib import Path
 from sse_starlette.sse import EventSourceResponse
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -12,12 +13,16 @@ load_dotenv()
 
 rag_pipeline = RAGPipeline()
 
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Initializing RAG pipeline...")
     rag_pipeline.initialize()
     print("RAG pipeline ready!")
     yield
+    rag_pipeline.weaviate_client.close()
     print("Shutting down application...")
 
 
@@ -73,3 +78,43 @@ async def ask_question_stream(request: QuestionRequest):
                 })
             }
     return EventSourceResponse(event_generator())
+
+@app.post("/upload")
+async def upload_pdf(file:UploadFile = File(...)):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are allowed"
+        )
+        
+    file_path = UPLOAD_DIR / f"{uuid.uuid4()}.pdf"
+    
+    try:
+        content = await file.read()
+        if not content.startswith(b"%PDF-"):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid PDF file"
+            )
+        if len(content) > 20 * 1024 * 1024:
+            raise HTTPException(
+                status_code=413,
+                detail="PDF must be smaller than 20 MB."
+            )
+        
+        file_path.write_bytes(content)
+        cnt_chunks = rag_pipeline.upload_pdf(str(file_path), file.filename)
+        return {
+            "message": "PDF uploaded and indexed successfully.",
+            "filename": file.filename,
+            "chunks": cnt_chunks
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+    finally:
+        file_path.unlink(missing_ok=True)
