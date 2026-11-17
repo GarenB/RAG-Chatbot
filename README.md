@@ -1,0 +1,3 @@
+- docker compose up -d
+- uvicorn src.main:app --reload
+- uv run streamlit run src/streamlit_app.py

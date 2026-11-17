@@ -20,6 +20,8 @@ dependencies = [
     "python-multipart>=0.0.32",
     "requests>=2.34.2",
     "sse-starlette>=3.5.1",
+    "sseclient-py>=1.9.0",
+    "streamlit>=1.65.0",
     "uvicorn>=0.54.0",
     "weaviate-client>=4.24.1",
 ]
