@@ -4,8 +4,8 @@ import os
 import weaviate
 from weaviate.classes.init import AdditionalConfig, Timeout
 from weaviate.classes.config import Configure, Property, DataType
-from langchain_weaviate import WeaviateVectorStore
 
+from langchain_weaviate import WeaviateVectorStore
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
@@ -14,6 +14,10 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_classic.chains import create_retrieval_chain
+from langchain_classic.retrievers.contextual_compression import ContextualCompressionRetriever
+from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
+
+from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 
 
 class RAGPipeline:
@@ -21,6 +25,7 @@ class RAGPipeline:
         self.ollama_url = os.getenv("OLLAMA")
         self.embed_model = os.getenv("EMBED_MODEL")
         self.chat_model = os.getenv("CHAT_MODEL")
+        self.cross_encoder_model = os.getenv("CROSS_ENCODER_MODEL")
         
         self.embeddings = OllamaEmbeddings(
             model=self.embed_model,
@@ -45,6 +50,8 @@ class RAGPipeline:
         )
         
         self.collection_name="DocumentChunks"
+        self.cross_encoder = HuggingFaceCrossEncoder(model_name=self.cross_encoder_model)
+        self.reranker = CrossEncoderReranker(model = self.cross_encoder, top_n=3)
         
     def create_collection(self):
         if not self.weaviate_client.collections.exists(self.collection_name):
@@ -126,7 +133,13 @@ class RAGPipeline:
         self.retriever = self.vectorstore.as_retriever(
             search_kwargs={"k": 5}
         )
-        return 0
+        
+        self.compression_retriever = ContextualCompressionRetriever(
+            base_compressor=self.reranker,
+            base_retriever=self.retriever
+        )
+        
+        return self.compression_retriever
 
     def build_chain(self):
         system_prompt = """
@@ -157,7 +170,7 @@ Context:
         )
 
         self.rag_chain = create_retrieval_chain(
-            self.retriever,
+            self.compression_retriever,
             question_answer_chain
         )
 
