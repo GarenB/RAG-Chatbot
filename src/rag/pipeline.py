@@ -1,6 +1,7 @@
 
 import os
 
+from pydantic import BaseModel, Field
 import weaviate
 from weaviate.classes.init import AdditionalConfig, Timeout
 from weaviate.classes.config import Configure, Property, DataType
@@ -11,7 +12,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_core.documents import Document
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import BaseMessage, AIMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.retrievers.contextual_compression import ContextualCompressionRetriever
@@ -19,6 +23,14 @@ from langchain_classic.retrievers.document_compressors import CrossEncoderRerank
 
 from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 
+class InMemoryHistory(BaseChatMessageHistory, BaseModel):
+    messages: list[BaseMessage] = Field(default_factory=list)
+    
+    def add_messages(self, messages: list[BaseMessage]) -> None:
+        self.messages.extend(messages) # add list of msges to the store
+        
+    def clear(self) -> None:
+        self.messages = []
 
 class RAGPipeline:
     def __init__(self):
@@ -37,6 +49,7 @@ class RAGPipeline:
             base_url=self.ollama_url,
             temperature=0
         )
+        
         self.retriever = None
         self.rag_chain = None
         
@@ -52,6 +65,7 @@ class RAGPipeline:
         self.collection_name="DocumentChunks"
         self.cross_encoder = HuggingFaceCrossEncoder(model_name=self.cross_encoder_model)
         self.reranker = CrossEncoderReranker(model = self.cross_encoder, top_n=3)
+        self.store = {}
         
     def create_collection(self):
         if not self.weaviate_client.collections.exists(self.collection_name):
@@ -140,6 +154,11 @@ class RAGPipeline:
         )
         
         return self.compression_retriever
+    
+    def get_history_by_session_id(self, session_id: str) -> BaseChatMessageHistory:
+        if session_id not in self.store:
+            self.store[session_id] = InMemoryHistory()
+        return self.store[session_id]
 
     def build_chain(self):
         system_prompt = """
@@ -161,6 +180,7 @@ Context:
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
+            MessagesPlaceholder(variable_name="history"),
             ("human", "{input}")
         ])
 
@@ -169,9 +189,17 @@ Context:
             prompt
         )
 
-        self.rag_chain = create_retrieval_chain(
+        chain = create_retrieval_chain(
             self.compression_retriever,
             question_answer_chain
+        )
+        
+        self.rag_chain = RunnableWithMessageHistory(
+            chain,
+            self.get_history_by_session_id,
+            input_messages_key="input",
+            history_messages_key="history",
+            output_messages_key="answer"
         )
 
     def initialize(self):
@@ -180,13 +208,14 @@ Context:
         self.build_retriever()
         self.build_chain()
 
-    def ask(self, question: str):
+    def ask(self, question: str, session_id: str):
         if self.rag_chain is None:
             raise RuntimeError("RAG pipeline is not initialized.")
 
-        response = self.rag_chain.invoke({
-            "input": question
-        })
+        response = self.rag_chain.invoke(
+            {"input": question},
+            config={"configurable": {"session_id": session_id}}
+        )
 
         sources = []
 
@@ -202,13 +231,14 @@ Context:
             "sources": sources
         }
 
-    async def ask_stream(self, question: str):
+    async def ask_stream(self, question: str, session_id: str):
         if self.rag_chain is None:
             raise RuntimeError("RAG pipeline is not initialized.")
 
-        async for chunk in self.rag_chain.astream({
-            "input": question
-        }):
+        async for chunk in self.rag_chain.astream(
+            {"input": question},
+            config={"configurable": {"session_id": session_id}}
+        ):
 
             # Retrieved documents
             context = chunk.get("context")

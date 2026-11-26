@@ -53,7 +53,7 @@ def health():
 @app.post("/ask")
 def ask_question(request: QuestionRequest):
     try:
-        response = rag_pipeline.ask(request.question)
+        response = rag_pipeline.ask(request.question, session_id="user_1")
         return response
     except Exception as e:
         raise HTTPException(
@@ -65,7 +65,7 @@ def ask_question(request: QuestionRequest):
 async def ask_question_stream(request: QuestionRequest):
     async def event_generator():
         try:
-            async for event in rag_pipeline.ask_stream(request.question):
+            async for event in rag_pipeline.ask_stream(request.question, session_id="user_1"):
                 yield {
                     "event": event["event"],
                     "data": json.dumps(event["data"])
