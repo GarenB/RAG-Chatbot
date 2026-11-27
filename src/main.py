@@ -118,3 +118,13 @@ async def upload_pdf(file:UploadFile = File(...)):
         )
     finally:
         file_path.unlink(missing_ok=True)
+
+@app.get("/documents")
+def get_uploaded_documents():
+    try:
+        return rag_pipeline.get_uploaded_documents()
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )

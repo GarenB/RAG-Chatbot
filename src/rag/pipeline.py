@@ -155,6 +155,47 @@ class RAGPipeline:
         
         return self.compression_retriever
     
+    def get_uploaded_documents(self):
+        collection = self.weaviate_client.collections.get(
+            self.collection_name
+        )
+
+        documents = {}
+
+        for obj in collection.iterator(return_properties=["source", "page"], cache_size=100):
+            filename = obj.properties.get("source")
+
+            if not filename:
+                continue
+
+            if filename not in documents:
+                documents[filename] = {
+                    "filename": filename,
+                    "chunks": 0,
+                    "pages": set()
+                }
+
+            documents[filename]["chunks"] += 1
+
+            page = obj.properties.get("page")
+
+            if page is not None:
+                documents[filename]["pages"].add(page)
+
+        res = []
+        for doc in documents.values():
+            res.append({
+                "filename": doc["filename"],
+                "chunks": doc["chunks"],
+                "pages": len(doc["pages"])
+            })
+
+        return {
+            "documents": res,
+            "total_documents": len(res),
+            "total_chunks": sum(doc["chunks"] for doc in res)
+        }
+        
     def get_history_by_session_id(self, session_id: str) -> BaseChatMessageHistory:
         if session_id not in self.store:
             self.store[session_id] = InMemoryHistory()
