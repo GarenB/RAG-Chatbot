@@ -2,9 +2,11 @@
 import os
 
 from pydantic import BaseModel, Field
+
 import weaviate
 from weaviate.classes.init import AdditionalConfig, Timeout
 from weaviate.classes.config import Configure, Property, DataType
+from weaviate.classes.query import Filter
 
 from langchain_weaviate import WeaviateVectorStore
 from langchain_community.document_loaders import PyPDFLoader
@@ -194,6 +196,23 @@ class RAGPipeline:
             "documents": res,
             "total_documents": len(res),
             "total_chunks": sum(doc["chunks"] for doc in res)
+        }
+        
+    def delete_document(self, filename: str):
+        if not self.weaviate_client.collections.exists(self.collection_name):
+            raise RuntimeError("Document collection does not exist.")
+
+        collection = self.weaviate_client.collections.get(
+            self.collection_name
+        )
+
+        result = collection.data.delete_many(
+            where=Filter.by_property("source").equal(filename)
+        )
+
+        return {
+            "filename": filename,
+            "deleted_chunks": result.successful
         }
         
     def get_history_by_session_id(self, session_id: str) -> BaseChatMessageHistory:

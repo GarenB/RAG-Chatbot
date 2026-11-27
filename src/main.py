@@ -128,3 +128,13 @@ def get_uploaded_documents():
             status_code=500,
             detail=str(e)
         )
+        
+@app.delete("/documents/{filename}")
+def delete_document(filename: str):
+    try:
+        return rag_pipeline.delete_document(filename)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
