@@ -81,6 +81,9 @@ if "chat_history" not in st.session_state:
 
 if "current_chat_id" not in st.session_state:
     st.session_state.current_chat_id = None
+    
+if "documents_loaded" not in st.session_state:
+    st.session_state.documents_loaded = False
 
 
 # =====================================================
@@ -120,7 +123,23 @@ def upload_document(uploaded_file):
     except requests.RequestException as e:
         st.error(f"Upload failed: {str(e)}")
         return None
+    
+def get_uploaded_documents():
+    try:
+        response = requests.get(
+            f"{API_URL}/documents",
+            timeout=30
+        )
 
+        response.raise_for_status()
+
+        data = response.json()
+
+        return data.get("documents", [])
+
+    except requests.RequestException as e:
+        st.error(f"Failed to retrieve documents: {str(e)}")
+        return []
 
 def delete_document(filename):
     try:
@@ -131,12 +150,10 @@ def delete_document(filename):
 
         response.raise_for_status()
 
-        st.session_state.uploaded_documents = [
-            doc for doc in st.session_state.uploaded_documents
-            if doc["filename"] != filename
-        ]
-
         st.success(f"{filename} deleted successfully.")
+        
+        st.session_state.uploaded_documents = get_uploaded_documents()
+
         st.rerun()
 
     except requests.RequestException as e:
@@ -245,6 +262,10 @@ def open_chat(chat_id):
 # SIDEBAR
 # =====================================================
 
+if not st.session_state.documents_loaded:
+    st.session_state.uploaded_documents = get_uploaded_documents()
+    st.session_state.documents_loaded = True
+
 with st.sidebar:
 
     st.title("📚 RAG Assistant")
@@ -329,15 +350,7 @@ with st.sidebar:
                         file.name
                     )
 
-                    # Avoid duplicate entries
-                    if not any(
-                        doc["filename"] == filename
-                        for doc in st.session_state.uploaded_documents
-                    ):
-                        st.session_state.uploaded_documents.append({
-                            "filename": filename,
-                            "chunks": result.get("chunks", 0)
-                        })
+                    st.session_state.uploaded_documents = get_uploaded_documents()
 
                 progress.progress(
                     (index + 1) / len(uploaded_files)
@@ -353,28 +366,29 @@ with st.sidebar:
 
     st.markdown("**📚 Uploaded Documents**")
 
-    if st.session_state.uploaded_documents:
+    documents = st.session_state.uploaded_documents
 
-        for index, document in enumerate(
-            st.session_state.uploaded_documents
-        ):
+    if documents:
 
-            col1, col2 = st.columns([4, 1])
+        st.caption(f"{len(documents)} documents uploaded")
+
+        for index, document in enumerate(documents):
+
+            col1, col2 = st.columns([5, 1])
 
             with col1:
-                st.markdown(
-                    f"📄 {document['filename']}"
-                )
+                st.markdown(f"📄 {document['filename']}")
 
                 st.caption(
-                    f"{document['chunks']} chunks"
+                    f"{document.get('pages', 0)} pages · "
+                    f"{document.get('chunks', 0)} chunks"
                 )
 
             with col2:
                 if st.button(
                     "🗑️",
                     key=f"delete_doc_{index}",
-                    help="Delete document"
+                    help=f"Delete {document['filename']}"
                 ):
                     delete_document(document["filename"])
 
