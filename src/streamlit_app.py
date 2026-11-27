@@ -4,9 +4,9 @@ import requests
 import streamlit as st
 from sseclient import SSEClient
 
-# -----------------------------
-# Configuration
-# -----------------------------
+# =====================================================
+# CONFIGURATION
+# =====================================================
 
 API_URL = "http://localhost:8000"
 
@@ -17,40 +17,58 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# -----------------------------
-# Custom CSS
-# -----------------------------
+# =====================================================
+# CUSTOM CSS
+# =====================================================
 
 st.markdown("""
 <style>
     .main-title {
-        font-size: 2.2rem;
+        font-size: 2rem;
         font-weight: 700;
         margin-bottom: 0;
     }
 
     .subtitle {
         color: #888888;
-        font-size: 1rem;
-        margin-bottom: 25px;
+        font-size: 0.95rem;
+        margin-bottom: 20px;
     }
 
-    .upload-box {
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #444;
+    [data-testid="stSidebar"] {
+        min-width: 300px;
+    }
+
+    .section-title {
+        font-size: 1.1rem;
+        font-weight: 700;
+    }
+
+    .document-name {
+        font-size: 0.9rem;
     }
 
     .stChatMessage {
         border-radius: 12px;
     }
+    
+    /* Chat history titles */
+    [data-testid="stSidebar"] button {
+        justify-content: flex-start !important;
+        text-align: left !important;
+    }
+
+    [data-testid="stSidebar"] button p {
+        text-align: left !important;
+    }
+    
 </style>
 """, unsafe_allow_html=True)
 
 
-# -----------------------------
-# Session State
-# -----------------------------
+# =====================================================
+# SESSION STATE
+# =====================================================
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -58,10 +76,16 @@ if "messages" not in st.session_state:
 if "uploaded_documents" not in st.session_state:
     st.session_state.uploaded_documents = []
 
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-# -----------------------------
-# API Functions
-# -----------------------------
+if "current_chat_id" not in st.session_state:
+    st.session_state.current_chat_id = None
+
+
+# =====================================================
+# API FUNCTIONS
+# =====================================================
 
 def check_api_health():
     try:
@@ -98,7 +122,30 @@ def upload_document(uploaded_file):
         return None
 
 
+def delete_document(filename):
+    try:
+        response = requests.delete(
+            f"{API_URL}/documents/{requests.utils.quote(filename, safe='')}",
+            timeout=30
+        )
+
+        response.raise_for_status()
+
+        st.session_state.uploaded_documents = [
+            doc for doc in st.session_state.uploaded_documents
+            if doc["filename"] != filename
+        ]
+
+        st.success(f"{filename} deleted successfully.")
+        st.rerun()
+
+    except requests.RequestException as e:
+        st.error(f"Document deletion failed: {str(e)}")
+
+
 def stream_response(question):
+    response = None
+
     try:
         response = requests.post(
             f"{API_URL}/ask/stream",
@@ -115,121 +162,161 @@ def stream_response(question):
 
             if not event.data:
                 continue
-            
+
             if event.event == "done":
                 break
-            
+
             if event.event == "sources":
-                sources = json.loads(event.data)
                 continue
-            
+
             if event.event == "token":
-                token = json.loads(event.data)
-                yield token
+                yield json.loads(event.data)
 
             elif event.event == "error":
                 try:
                     data = json.loads(event.data)
-                    yield f"\n\n⚠️ {data.get('message', 'Generation failed.')}"
+                    yield (
+                        "\n\n⚠️ "
+                        + data.get("message", "Generation failed.")
+                    )
                 except json.JSONDecodeError:
-                    yield "\n\n⚠️ Generation failed"
+                    yield "\n\n⚠️ Generation failed."
 
     except requests.RequestException as e:
-        yield f"\n\n⚠️ API connection error: {str(e)}"    
+        yield f"\n\n⚠️ API connection error: {str(e)}"
 
     finally:
-        if "response" in locals():
+        if response:
             response.close()
 
 
-# -----------------------------
-# Sidebar
-# -----------------------------
+# =====================================================
+# CHAT MANAGEMENT
+# =====================================================
+
+def save_current_chat():
+
+    if not st.session_state.messages:
+        return
+
+    chat_id = st.session_state.current_chat_id
+
+    if chat_id is None:
+        return
+
+    for chat in st.session_state.chat_history:
+        if chat["id"] == chat_id:
+            chat["messages"] = st.session_state.messages.copy()
+            chat["title"] = next(
+                (
+                    msg["content"][:35]
+                    for msg in st.session_state.messages
+                    if msg["role"] == "user"
+                ),
+                "New conversation"
+            )
+            return
+
+
+def new_chat():
+
+    save_current_chat()
+
+    st.session_state.messages = []
+    st.session_state.current_chat_id = None
+
+    st.rerun()
+
+
+def open_chat(chat_id):
+
+    save_current_chat()
+
+    for chat in st.session_state.chat_history:
+        if chat["id"] == chat_id:
+            st.session_state.messages = chat["messages"].copy()
+            st.session_state.current_chat_id = chat_id
+            break
+
+    st.rerun()
+
+
+# =====================================================
+# SIDEBAR
+# =====================================================
 
 with st.sidebar:
 
     st.title("📚 RAG Assistant")
 
-    st.markdown("---")
-
-    st.subheader("API Status")
-
-    if check_api_health():
-        st.success("Backend connected")
-    else:
-        st.error("Backend unavailable")
+    st.caption("Your personal knowledge base")
 
     st.markdown("---")
 
-    st.subheader("Navigation")
+    # -----------------------------
+    # HISTORY
+    # -----------------------------
 
-    page = st.radio(
-        "Select a section",
-        ["💬 Chat", "📄 Documents"]
-    )
+    st.subheader("💬 Chats")
 
-    st.markdown("---")
+    if st.button(
+        "+ New Chat",
+        use_container_width=True,
+        type="secondary"
+    ):
+        new_chat()
 
-    st.caption("Powered by FastAPI, Ollama and Weaviate")
+    if st.session_state.chat_history:
 
+        for chat in reversed(st.session_state.chat_history):
 
-# -----------------------------
-# Header
-# -----------------------------
+            title = chat["title"]
+            max_length = 25
 
-st.markdown(
-    '<p class="main-title">Knowledge Assistant</p>',
-    unsafe_allow_html=True
-)
+            display_title = (
+                title[:max_length - 3] + "..."
+                if len(title) > max_length
+                else title
+            )
 
-st.markdown(
-    '<p class="subtitle">Ask questions about your uploaded documents using AI.</p>',
-    unsafe_allow_html=True
-)
-
-
-# =====================================================
-# DOCUMENT UPLOAD SECTION
-# =====================================================
-
-if page == "📄 Documents":
-
-    st.header("📄 Document Management")
-
-    st.write(
-        "Upload PDF documents to add them to your knowledge base."
-    )
+            if st.button(
+                f"💬 {display_title}",
+                key=f"chat_{chat['id']}",
+                use_container_width=True,
+                help=title
+            ):
+                open_chat(chat["id"])
 
     st.markdown("---")
+
+    # -----------------------------
+    # DOCUMENTS
+    # -----------------------------
+
+    st.subheader("📄 Documents")
+
+    st.caption("Manage your knowledge base")
 
     uploaded_files = st.file_uploader(
-        "Choose PDF documents",
+        "Upload PDF documents",
         type=["pdf"],
         accept_multiple_files=True,
-        help="Upload one or more PDF files."
+        key="document_uploader"
     )
 
     if uploaded_files:
 
-        st.write(f"**Selected files:** {len(uploaded_files)}")
-
-        for file in uploaded_files:
-            st.write(f"📄 {file.name} ({file.size / 1024:.2f} KB)")
-
         if st.button(
-            "🚀 Upload and Index Documents",
-            type="primary",
-            use_container_width=True
+            "🚀 Upload Documents",
+            use_container_width=True,
+            type="primary"
         ):
 
             progress = st.progress(0)
-            status = st.empty()
 
             successful = 0
 
             for index, file in enumerate(uploaded_files):
-
-                status.info(f"Processing {file.name}...")
 
                 result = upload_document(file)
 
@@ -237,122 +324,180 @@ if page == "📄 Documents":
 
                     successful += 1
 
-                    st.session_state.uploaded_documents.append({
-                        "filename": result.get("filename", file.name),
-                        "chunks": result.get("chunks", 0)
-                    })
-
-                    st.success(
-                        f"✅ {file.name} uploaded successfully! "
-                        f"Chunks: {result.get('chunks', 0)}"
+                    filename = result.get(
+                        "filename",
+                        file.name
                     )
+
+                    # Avoid duplicate entries
+                    if not any(
+                        doc["filename"] == filename
+                        for doc in st.session_state.uploaded_documents
+                    ):
+                        st.session_state.uploaded_documents.append({
+                            "filename": filename,
+                            "chunks": result.get("chunks", 0)
+                        })
 
                 progress.progress(
                     (index + 1) / len(uploaded_files)
                 )
 
-            status.success(
-                f"Completed! {successful}/{len(uploaded_files)} "
-                "documents indexed."
+            st.success(
+                f"{successful}/{len(uploaded_files)} documents uploaded."
             )
 
-    st.markdown("---")
-
-    st.subheader("📚 Uploaded Documents")
-
-    if st.session_state.uploaded_documents:
-
-        for document in st.session_state.uploaded_documents:
-
-            with st.container(border=True):
-
-                col1, col2 = st.columns([3, 1])
-
-                with col1:
-                    st.write(f"📄 **{document['filename']}**")
-
-                with col2:
-                    st.metric(
-                        "Chunks",
-                        document["chunks"]
-                    )
-
-    else:
-        st.info(
-            "No documents uploaded during this session yet."
-        )
-
-
-# =====================================================
-# CHAT SECTION
-# =====================================================
-
-elif page == "💬 Chat":
-
-    st.header("💬 Chat with your documents")
-
-    st.caption(
-        "Ask questions and get answers based on your indexed documents."
-    )
-
-    # Clear chat button
-
-    col1, col2 = st.columns([5, 1])
-
-    with col2:
-        if st.button("🗑️ Clear Chat"):
-            st.session_state.messages = []
             st.rerun()
 
     st.markdown("---")
 
-    # Display conversation history
+    st.markdown("**📚 Uploaded Documents**")
 
-    for message in st.session_state.messages:
+    if st.session_state.uploaded_documents:
 
-        with st.chat_message(message["role"]):
+        for index, document in enumerate(
+            st.session_state.uploaded_documents
+        ):
 
-            st.markdown(message["content"])
+            col1, col2 = st.columns([4, 1])
 
-    # Chat input
+            with col1:
+                st.markdown(
+                    f"📄 {document['filename']}"
+                )
 
-    if prompt := st.chat_input(
-        "Ask something about your documents..."
-    ):
+                st.caption(
+                    f"{document['chunks']} chunks"
+                )
 
-        # Display user message
+            with col2:
+                if st.button(
+                    "🗑️",
+                    key=f"delete_doc_{index}",
+                    help="Delete document"
+                ):
+                    delete_document(document["filename"])
 
-        st.session_state.messages.append({
-            "role": "user",
-            "content": prompt
+    else:
+        st.caption("No documents uploaded yet.")
+
+    st.markdown("---")
+
+    # -----------------------------
+    # API STATUS
+    # -----------------------------
+
+    if check_api_health():
+        st.success("🟢 Backend connected")
+    else:
+        st.error("🔴 Backend unavailable")
+
+    st.caption("Powered by FastAPI, Ollama and Weaviate")
+
+
+# =====================================================
+# MAIN CHAT AREA
+# =====================================================
+
+st.markdown(
+    '<p class="main-title">Knowledge Assistant</p>',
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    '<p class="subtitle">'
+    'Ask questions about your uploaded documents using AI.'
+    '</p>',
+    unsafe_allow_html=True
+)
+
+st.markdown("---")
+
+
+# =====================================================
+# DISPLAY CHAT HISTORY
+# =====================================================
+
+if not st.session_state.messages:
+
+    st.markdown("### 👋 Welcome to your Knowledge Assistant")
+
+    st.write(
+        "Ask anything about your uploaded PDF documents."
+    )
+
+    st.info(
+        "Upload documents using the left sidebar to get started."
+    )
+
+
+for message in st.session_state.messages:
+
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+
+# =====================================================
+# CHAT INPUT
+# =====================================================
+
+if prompt := st.chat_input(
+    "Ask something about your documents..."
+):
+
+    # Create a new chat if necessary
+
+    if st.session_state.current_chat_id is None:
+
+        import uuid
+
+        chat_id = str(uuid.uuid4())
+
+        st.session_state.current_chat_id = chat_id
+
+        st.session_state.chat_history.append({
+            "id": chat_id,
+            "title": prompt[:35],
+            "messages": []
         })
 
-        with st.chat_message("user"):
-            st.markdown(prompt)
+    # Save user message
 
-        # Generate assistant response
+    user_message = {
+        "role": "user",
+        "content": prompt
+    }
 
-        with st.chat_message("assistant"):
+    st.session_state.messages.append(user_message)
 
-            response_placeholder = st.empty()
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-            full_response = ""
+    # Generate assistant response
 
-            with st.spinner("Thinking..."):
+    with st.chat_message("assistant"):
 
-                for token in stream_response(prompt):
+        response_placeholder = st.empty()
 
-                    full_response += token
+        full_response = ""
 
-                    response_placeholder.markdown(
-                        full_response + "▌"
-                    )
+        with st.spinner("Thinking..."):
 
-            response_placeholder.markdown(full_response)
+            for token in stream_response(prompt):
 
-        # Save assistant response
+                full_response += token
 
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": full_response
-        })
+                response_placeholder.markdown(
+                    full_response + "▌"
+                )
+
+        response_placeholder.markdown(full_response)
+
+    # Save assistant response
+
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": full_response
+    })
+
+    save_current_chat()
