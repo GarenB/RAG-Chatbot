@@ -1,0 +1,39 @@
+# Backend
+fastapi
+uvicorn
+python-multipart
+sse-starlette
+
+# Frontend
+streamlit
+requests
+sseclient-py
+
+# Environment variables
+python-dotenv
+
+# Data validation
+pydantic
+
+# Weaviate
+weaviate-client
+langchain-weaviate
+
+# LangChain
+langchain
+langchain-core
+langchain-community
+langchain-classic
+langchain-text-splitters
+langchain-ollama
+
+# PDF processing
+pypdf
+
+# Vector stores
+faiss-cpu
+
+# Embeddings and reranking
+sentence-transformers
+torch
+transformers

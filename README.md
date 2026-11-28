@@ -1,24 +1,30 @@
 # Run Project
 
-### 1. Start Docker Services
+### 1. Install depedencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Start Docker Services
 
 ```bash
 docker compose up -d
 ```
 
-### 2. Start FastAPI Backend
+### 3. Start FastAPI Backend
 
 ```bash
 uvicorn src.main:app --reload
 ```
 
-### 3. Start Streamlit Frontend
+### 4. Start Streamlit Frontend
 
 ```bash
 uv run streamlit run src/streamlit_app.py
 ```
 
-### 4. Stop Docker Services
+### 5. Stop Docker Services
 
 ```bash
 docker compose down -v
